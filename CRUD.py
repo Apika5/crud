@@ -1,69 +1,43 @@
-from fastapi import FastAPI, HTTPException  #Здесь импортируется класс FastAPI из библиотеки, который предоставляет основные функции
+from fastapi import FastAPI, HTTPException
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from pymongo import MongoClient
-from bson import ObjectId
-from typing import List
 
 app = FastAPI()
 
-# тут подключение к MongoDB
-client = MongoClient("mongodb://localhost:27017/")
-db = client["library"]
-collection = db["movies"]
+MONGO_URL = "mongodb://localhost:27017"
+client = AsyncIOMotorClient(MONGO_URL)
+database = client["mydatabase"]
+collection = database["items"]
 
-class Movie(BaseModel):
-    title: str
-    director: str
-    release_year: int
+class Item(BaseModel):
+    name: str
+    description: str = None
+    id: str = None
+@app.post("/items/", response_model=Item)
+async def create_item(item: Item):
+    result = await collection.insert_one(item.dict())
+    item.id = str(result.inserted_id)
+    return item
 
-@app.post("/movies", response_model=Movie)
-def create_movie(movie: Movie):
-    # Дальше добавление фильма в базу данных
-    movie_data = {
-        "title": movie.title,
-        "director": movie.director,
-        "release_year": movie.release_year
-    }
-    result = collection.insert_one(movie_data)
-    movie_id = result.inserted_id
+@app.get("/items/{item_id}", response_model=Item)
+async def read_item(item_id: str):
+    item = await collection.find_one({"_id": item_id})
+    if item:
+        return item
+    raise HTTPException(status_code=404, detail="Item not found")
 
-    return {"title": movie.title, "director": movie.director, "release_year": movie.release_year, "_id": str(movie_id)}
-
-@app.get("/movies", response_model=List[Movie])
-def read_movies():
-    # Потом получение списка фильмов из базы данных
-    movies = list(collection.find({}, {"_id": 0}))
-    return movies
-
-@app.get("/movies/{movie_id}", response_model=Movie)
-def read_movie(movie_id: str):
-    # Тут получение конкретного фильма по идентификатору из БД
-    movie = collection.find_one({"_id": ObjectId(movie_id)}, {"_id": 0})
-    if movie:
-        return movie
-    raise HTTPException(status_code=404, detail="Movie not found")
-
-@app.put("/movies/{movie_id}", response_model=Movie)
-def update_movie(movie_id: str, movie: Movie):
-    # Обновление фильма в БД
-    result = collection.update_one(
-        {"_id": ObjectId(movie_id)},
-        {"$set": {
-            "title": movie.title,
-            "director": movie.director,
-            "release_year": movie.release_year
-        }}
+@app.put("/items/{item_id}", response_model=Item)
+async def update_item(item_id: str, item: Item):
+    updated_item = await collection.find_one_and_update(
+        {"_id": item_id}, {"$set": item.dict()}, return_document=True
     )
+    if updated_item:
+        return Item(**updated_item)
+    raise HTTPException(status_code=404, detail="Item not found")
 
-    if result.modified_count == 1:
-        return {"title": movie.title, "director": movie.director, "release_year": movie.release_year}
-    raise HTTPException(status_code=404, detail="Movie not found")
-
-@app.delete("/movies/{movie_id}")
-def delete_movie(movie_id: str):
-    # И удаление фильма
-    result = collection.delete_one({"_id": ObjectId(movie_id)})
-
-    if result.deleted_count == 1:
-        return {"message": "Movie deleted"}
-    raise HTTPException(status_code=404, detail="Movie not found")
+@app.delete("/items/{item_id}", response_model=Item)
+async def delete_item(item_id: str):
+    deleted_item = await collection.find_one_and_delete({"_id": item_id})
+    if deleted_item:
+        return Item(**deleted_item)
+    raise HTTPException(status_code=404, detail="Item not found")
